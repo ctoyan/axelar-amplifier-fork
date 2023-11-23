@@ -33,6 +33,7 @@ mod evm;
 mod handlers;
 mod json_rpc;
 mod queue;
+mod solana;
 pub mod state;
 mod sui;
 mod tm_client;
@@ -224,6 +225,18 @@ where
                 } => self.configure_handler(
                     "sui-msg-verifier",
                     handlers::sui_verify_msg::Handler::new(
+                        worker.clone(),
+                        cosmwasm_contract,
+                        json_rpc::Client::new_http(&rpc_url).change_context(Error::Connection)?,
+                        self.broadcaster.client(),
+                    ),
+                ),
+                handlers::config::Config::SolanaMsgVerifier {
+                    cosmwasm_contract,
+                    rpc_url,
+                } => self.configure_handler(
+                    "solana-msg-verifier",
+                    handlers::solana_verify_msg::Handler::new(
                         worker.clone(),
                         cosmwasm_contract,
                         json_rpc::Client::new_http(&rpc_url).change_context(Error::Connection)?,
