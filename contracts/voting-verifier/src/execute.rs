@@ -63,6 +63,14 @@ pub fn verify_worker_set(
     ))
 }
 
+// NOTE by Stoyan: Takes messages. Splits them into verified and pending(unverified), based on
+// previously stored verified msgs in the contract state.
+// If there are no pending msgs - return messages as verified directly.
+// If there are pending msgs - create a poll(by fetching active workers from service registry)
+// with those messages and store them in state as pending.
+// Saves the poll id in the contract state.
+// Returns verification statuses and emits a PolLStarted::Messages event (there is also a
+// PollStarted::WorkerSet event... so polls for 2 different things)
 pub fn verify_messages(
     deps: DepsMut,
     env: Env,
@@ -214,6 +222,9 @@ pub fn end_poll(deps: DepsMut, env: Env, poll_id: PollId) -> Result<Response, Co
         .set_data(to_binary(&EndPollResponse { poll_result })?))
 }
 
+// NOTE by Stoyan: Query the service registry contract and get the active workers.
+// Turns them into Participants and return them along with the voting threshold, which was
+// initially inited with the contract
 fn take_snapshot(deps: Deps, chain: &ChainName) -> Result<snapshot::Snapshot, ContractError> {
     let config = CONFIG.load(deps.storage)?;
 
