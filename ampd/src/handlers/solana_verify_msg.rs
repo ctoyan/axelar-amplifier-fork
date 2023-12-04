@@ -3,6 +3,7 @@ use std::convert::TryInto;
 
 use async_trait::async_trait;
 use cosmrs::cosmwasm::MsgExecuteContract;
+use cosmrs::AccountId;
 use error_stack::ResultExt;
 use serde::Deserialize;
 use solana_sdk::signature::Signature;
@@ -99,6 +100,9 @@ where
         let msg = serde_json::to_vec(&ExecuteMsg::Vote { poll_id, votes })
             .expect("vote msg should serialize");
         let tx = MsgExecuteContract {
+            // NOTE: axelar17lqysp4lka9h6cyw8enxhw20t9f855zfw3k3xg, which comes from
+            // the tofnd on ampd start is funded and hardcoded as worker address
+            // everywhere
             sender: self.worker.as_ref().clone(),
             contract: self.voting_verifier.as_ref().clone(),
             msg,
@@ -133,10 +137,7 @@ where
                 // println!("MISMATCH {:?}", event);
                 return Ok(());
             }
-            event => {
-                println!("EVENT {:?}", event);
-                event.change_context(Error::DeserializeEvent)?
-            }
+            event => event.change_context(Error::DeserializeEvent)?,
         };
 
         if self.voting_verifier != contract_address {
@@ -148,7 +149,9 @@ where
         //     return Ok(());
         // }
 
-        if !participants.contains(&String::from("mock_address")) {
+        if !participants.contains(&String::from(
+            "axelar17lqysp4lka9h6cyw8enxhw20t9f855zfw3k3xg",
+        )) {
             return Ok(());
         }
 
@@ -171,9 +174,6 @@ where
                 .collect();
         }
 
-        println!("VOTES!!!!!!!!!!!!!!!!!!!!!!!!!!!! {:?}", votes);
-
-        Ok(())
-        // self.broadcast_votes(poll_id, votes).await
+        self.broadcast_votes(poll_id, votes).await
     }
 }
