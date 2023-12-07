@@ -62,9 +62,8 @@ struct PollStartedEvent {
     poll_id: PollID,
     source_gateway_address: String,
     messages: Vec<Message>,
-    participants: Vec<String>,
-    // TODO: currently deployed with mock_address hardcoded in voting-verifier
     // participants: Vec<TMAddress>,
+    participants: Vec<String>,
 }
 
 pub struct Handler<C, B>
@@ -97,8 +96,10 @@ where
         }
     }
     async fn broadcast_votes(&self, poll_id: PollID, votes: Vec<bool>) -> Result<()> {
+        println!("666666666666666666666666666666666666666666");
         let msg = serde_json::to_vec(&ExecuteMsg::Vote { poll_id, votes })
             .expect("vote msg should serialize");
+        println!("7777777777777777777777777777777777777777777");
         let tx = MsgExecuteContract {
             // NOTE: axelar17lqysp4lka9h6cyw8enxhw20t9f855zfw3k3xg, which comes from
             // the tofnd on ampd start is funded and hardcoded as worker address
@@ -108,6 +109,7 @@ where
             msg,
             funds: vec![],
         };
+        println!("8888888888888888888888888888888888888888888");
 
         self.broadcast_client
             .broadcast(tx)
@@ -134,37 +136,48 @@ where
             ..
         } = match event.try_into() as error_stack::Result<_, _> {
             Err(report) if matches!(report.current_context(), EventTypeMismatch(_)) => {
-                // println!("MISMATCH {:?}", event);
                 return Ok(());
             }
-            event => event.change_context(Error::DeserializeEvent)?,
+            event => {
+                println!("DESEEEEEEEEEEEEEEEEEE {:?}", event);
+                event.change_context(Error::DeserializeEvent)?
+            }
         };
 
+        println!("111111111111111111111111111");
         if self.voting_verifier != contract_address {
+            println!("DONT MATCH");
             return Ok(());
         }
 
-        // TODO: Uncomment when using real workers
+        println!("222222222222222222222222222");
         // if !participants.contains(&self.worker) {
+        //     println!("DONT CONTAIN");
         //     return Ok(());
         // }
 
+        // TODO: Uncomment when using fake workers
         if !participants.contains(&String::from(
             "axelar17lqysp4lka9h6cyw8enxhw20t9f855zfw3k3xg",
         )) {
+            println!("KOR222222222222222222222222222");
             return Ok(());
         }
 
+        println!("3333333333333333333333333333");
         let tx_ids_from_msg: HashSet<_> = messages.iter().map(|msg| msg.tx_id.clone()).collect();
+        println!("4444444444444444444444444444");
 
         let mut sol_txs: Vec<EncodedConfirmedTransactionWithStatusMeta> = Vec::new();
         for msg_tx in tx_ids_from_msg {
             let result = self.rpc_client.get_transaction(msg_tx).await;
+            println!("TX {:#?}", result);
             match result {
                 Ok(sol_tx) => sol_txs.push(sol_tx),
                 Err(err) => println!("ERR {:?}", err),
             }
         }
+        println!("55555555555555555555555555555");
 
         let mut votes: Vec<bool> = vec![false; messages.len()];
         for msg in messages {
