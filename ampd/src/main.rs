@@ -10,7 +10,9 @@ use error_stack::{Report, ResultExt};
 use tracing::{error, info};
 use valuable::Valuable;
 
-use ampd::commands::{bond_worker, daemon, worker_address, SubCommand};
+use ampd::commands::{
+    bond_worker, daemon, declare_chain_support, worker_address, worker_hex_pubkey, SubCommand,
+};
 use ampd::config::Config;
 use ampd::Error;
 use axelar_wasm_std::utils::InspectorResult;
@@ -59,8 +61,14 @@ async fn main() -> ExitCode {
                 result
             })
         }
+        Some(SubCommand::DeclareChainSupport(args)) => {
+            declare_chain_support::run(cfg, &state_path, args).await
+        }
         Some(SubCommand::BondWorker(args)) => bond_worker::run(cfg, &state_path, args).await,
         Some(SubCommand::WorkerAddress) => worker_address::run(cfg.tofnd_config, &state_path).await,
+        Some(SubCommand::WorkerHexPubkey) => {
+            worker_hex_pubkey::run(cfg.tofnd_config, &state_path).await
+        }
     };
 
     match result {

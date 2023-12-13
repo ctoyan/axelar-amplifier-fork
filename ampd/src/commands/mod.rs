@@ -23,16 +23,22 @@ use crate::{tofnd, PREFIX};
 
 pub mod bond_worker;
 pub mod daemon;
+pub mod declare_chain_support;
 pub mod worker_address;
+pub mod worker_hex_pubkey;
 
 #[derive(Debug, Subcommand, Valuable)]
 pub enum SubCommand {
     /// Run the ampd daemon process (default)
     Daemon,
+    /// Declare chain support in the service registry contract
+    DeclareChainSupport(declare_chain_support::Args),
     /// Bond the worker to the service registry contract
     BondWorker(bond_worker::Args),
     /// Query the worker address
     WorkerAddress,
+    /// Query the worker pubkey and return as hex string
+    WorkerHexPubkey,
 }
 
 #[derive(Debug, Deserialize, Serialize, PartialEq)]

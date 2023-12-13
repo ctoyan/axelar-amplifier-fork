@@ -6,7 +6,6 @@ use cosmrs::cosmwasm::MsgExecuteContract;
 use cosmrs::AccountId;
 use error_stack::ResultExt;
 use serde::Deserialize;
-use solana_sdk::signature::Signature;
 use sui_types::base_types::{SuiAddress, TransactionDigest};
 
 use axelar_wasm_std::voting::PollID;
