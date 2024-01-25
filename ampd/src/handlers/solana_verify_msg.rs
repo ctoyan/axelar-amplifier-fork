@@ -9,7 +9,7 @@ use serde::Deserialize;
 use solana_sdk::signature::Signature;
 use sui_types::base_types::{SuiAddress, TransactionDigest};
 
-use axelar_wasm_std::voting::PollID;
+use axelar_wasm_std::voting::{PollId, Vote};
 use events::{Error::EventTypeMismatch, Event};
 use events_derive::try_from;
 use voting_verifier::msg::ExecuteMsg;
@@ -38,7 +38,7 @@ type Result<T> = error_stack::Result<T, Error>;
 // struct PollStartedEvent {
 //     #[serde(rename = "_contract_address")]
 //     contract_address: TMAddress,
-//     poll_id: PollID,
+//     poll_id: PollId,
 //     source_gateway_address: SuiAddress,
 //     messages: Vec<Message>,
 //     participants: Vec<TMAddress>,
@@ -51,7 +51,8 @@ pub struct Message {
     pub destination_address: String,
     pub destination_chain: connection_router::state::ChainName,
     pub source_address: String,
-    pub payload_hash: Hash,
+    #[serde(with = "axelar_wasm_std::hex")]
+    pub payload_hash: [u8; 32],
 }
 
 #[derive(Deserialize, Debug)]
@@ -59,7 +60,7 @@ pub struct Message {
 struct PollStartedEvent {
     #[serde(rename = "_contract_address")]
     contract_address: TMAddress,
-    poll_id: PollID,
+    poll_id: PollId,
     source_gateway_address: String,
     messages: Vec<Message>,
     // participants: Vec<TMAddress>,
@@ -95,7 +96,7 @@ where
             broadcast_client,
         }
     }
-    async fn broadcast_votes(&self, poll_id: PollID, votes: Vec<bool>) -> Result<()> {
+    async fn broadcast_votes(&self, poll_id: PollId, votes: Vec<Vote>) -> Result<()> {
         println!("666666666666666666666666666666666666666666");
         let msg = serde_json::to_vec(&ExecuteMsg::Vote { poll_id, votes })
             .expect("vote msg should serialize");
@@ -179,7 +180,7 @@ where
         }
         println!("55555555555555555555555555555");
 
-        let mut votes: Vec<bool> = vec![false; messages.len()];
+        let mut votes: Vec<Vote> = vec![Vote::NotFound; messages.len()];
         for msg in messages {
             votes = sol_txs
                 .iter()

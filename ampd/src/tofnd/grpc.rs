@@ -48,6 +48,7 @@ impl MultisigClient {
 #[async_trait]
 impl EcdsaClient for MultisigClient {
     async fn keygen(&mut self, key_uid: &str) -> Result<PublicKey> {
+        println!("KEY UID {}", key_uid);
         let request = KeygenRequest {
             key_uid: key_uid.to_string(),
             party_uid: self.party_uid.to_string(),
