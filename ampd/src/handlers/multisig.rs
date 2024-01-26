@@ -153,7 +153,7 @@ where
             Some(pub_key) => {
                 let signature = self
                     .signer
-                    .sign(self.multisig.to_string().as_str(), msg.clone(), pub_key)
+                    .sign("axelar", msg.clone(), pub_key)
                     .await
                     .change_context(Error::Sign)?;
 
