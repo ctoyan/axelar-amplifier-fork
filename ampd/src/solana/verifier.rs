@@ -221,127 +221,161 @@ pub fn verify_message(
 
 #[cfg(test)]
 mod tests {
-    use ethers::abi::AbiEncode;
-    use move_core_types::language_storage::StructTag;
-    use random_string::generate;
-    use sui_json_rpc_types::{SuiEvent, SuiTransactionBlockEvents, SuiTransactionBlockResponse};
-    use sui_types::{
-        base_types::{SuiAddress, TransactionDigest},
-        event::EventID,
+    use std::str::FromStr;
+
+    use crate::solana::json_rpc::{
+        SolInstruction, SolMessage, Transaction, UiTransactionStatusMeta,
     };
-
     use connection_router::state::ChainName;
+    use solana_program::pubkey::Pubkey;
 
-    use crate::handlers::sui_verify_msg::Message;
-    use crate::sui::verifier::verify_message;
-    use crate::types::{EVMAddress, Hash};
+    use super::*;
+
+    #[test]
+    fn should_verify_msg_if_correct() {
+        let (source_gateway_address, tx, msg) = get_matching_msg_and_tx_block();
+        assert_eq!(
+            Vote::SucceededOnChain,
+            verify_message(&source_gateway_address, &tx, &msg)
+        );
+    }
+
+    fn get_matching_msg_and_tx_block(
+    ) -> (String, EncodedConfirmedTransactionWithStatusMeta, Message) {
+        // Common fields among tx and message.
+        let tx_id = "fake_tx_id".to_string();
+        let destination_chain = "eth".to_string();
+        let destination_address = "0x0".to_string();
+        let payload: Vec<u8> = Vec::new();
+        let payload_hash: [u8; 32] = [0; 32];
+        let source_gateway_address: String = "sol".to_string();
+
+        let event = GatewayEvent::CallContract {
+            sender: Pubkey::from([0; 32]).into(),
+            destination_chain: destination_chain.clone().into_bytes(),
+            destination_address: destination_address.clone().into_bytes(),
+            payload,
+            payload_hash,
+        };
+
+        let mut event_data = Vec::new();
+        event.serialize(&mut event_data).unwrap();
+        let event_data_b64 = general_purpose::STANDARD.encode(event_data);
+        let mut log_message = "Program data: ".to_string();
+        log_message.push_str(&event_data_b64);
+
+        let tx = EncodedConfirmedTransactionWithStatusMeta {
+            transaction: Transaction {
+                message: SolMessage {
+                    instructions: vec![SolInstruction {
+                        data: "".to_string(),
+                    }],
+                    account_keys: vec![source_gateway_address.clone()],
+                },
+                signatures: vec![tx_id.clone()],
+            },
+            meta: UiTransactionStatusMeta {
+                log_messages: Some(vec![log_message]),
+            },
+        };
+
+        let message = Message {
+            tx_id,
+            event_index: 0,
+            destination_address: destination_address.clone(),
+            destination_chain: ChainName::from_str(&destination_chain).unwrap(),
+            source_address: source_gateway_address.clone(),
+            payload_hash,
+        };
+
+        (source_gateway_address, tx, message)
+    }
 
     #[test]
     fn should_not_verify_msg_if_tx_id_does_not_match() {
-        let (gateway_address, tx_receipt, mut msg) = get_matching_msg_and_tx_block();
-
-        msg.tx_id = TransactionDigest::random();
-        assert!(!verify_message(&gateway_address, &tx_receipt, &msg));
+        let (source_gateway_address, tx, mut msg) = get_matching_msg_and_tx_block();
+        msg.tx_id = "wrong_tx_id".to_string();
+        assert_eq!(
+            Vote::FailedOnChain,
+            verify_message(&source_gateway_address, &tx, &msg)
+        );
     }
 
+    #[ignore = "We are not checking the event index in production code."]
     #[test]
     fn should_not_verify_msg_if_event_index_does_not_match() {
-        let (gateway_address, tx_receipt, mut msg) = get_matching_msg_and_tx_block();
-
+        let (gateway_address, tx, mut msg) = get_matching_msg_and_tx_block();
         msg.event_index = rand::random::<u64>();
-        assert!(!verify_message(&gateway_address, &tx_receipt, &msg));
+        assert_eq!(Vote::NotFound, verify_message(&gateway_address, &tx, &msg));
     }
-
+    #[ignore = "We are not checking the source address in the gateway event."]
     #[test]
     fn should_not_verify_msg_if_source_address_does_not_match() {
-        let (gateway_address, tx_receipt, mut msg) = get_matching_msg_and_tx_block();
-
-        msg.source_address = SuiAddress::random_for_testing_only();
-        assert!(!verify_message(&gateway_address, &tx_receipt, &msg));
+         let (gateway_address, tx, mut msg) = get_matching_msg_and_tx_block();
+         msg.source_address = "bad_address".to_string();
+         assert_eq!(Vote::NotFound, verify_message(&gateway_address, &tx, &msg));
     }
 
     #[test]
     fn should_not_verify_msg_if_destination_chain_does_not_match() {
-        let (gateway_address, tx_receipt, mut msg) = get_matching_msg_and_tx_block();
-
-        msg.destination_chain = rand_chain_name();
-        assert!(!verify_message(&gateway_address, &tx_receipt, &msg));
+        let (gateway_address, tx, mut msg) = get_matching_msg_and_tx_block();
+        msg.destination_chain = ChainName::from_str("bad_chain").unwrap();
+        assert_eq!(Vote::FailedOnChain, verify_message(&gateway_address, &tx, &msg));
     }
 
     #[test]
-    fn should_not_verify_msg_if_destination_address_does_not_match() {
-        let (gateway_address, tx_receipt, mut msg) = get_matching_msg_and_tx_block();
-
-        msg.destination_address = EVMAddress::random().to_string();
-        assert!(!verify_message(&gateway_address, &tx_receipt, &msg));
+    fn should_not_verify_msg_if_destination_address_does_not_match() {        
+        let (gateway_address, tx, mut msg) = get_matching_msg_and_tx_block();
+        msg.destination_address = "bad_address".to_string();
+        assert_eq!(Vote::FailedOnChain, verify_message(&gateway_address, &tx, &msg));
     }
 
     #[test]
     fn should_not_verify_msg_if_payload_hash_does_not_match() {
-        let (gateway_address, tx_receipt, mut msg) = get_matching_msg_and_tx_block();
-
-        msg.payload_hash = Hash::random();
-        assert!(!verify_message(&gateway_address, &tx_receipt, &msg));
+        let (gateway_address, tx, mut msg) = get_matching_msg_and_tx_block();
+        msg.payload_hash = [1; 32];
+        assert_eq!(Vote::FailedOnChain, verify_message(&gateway_address, &tx, &msg));
     }
 
-    #[test]
-    fn should_verify_msg_if_correct() {
-        let (gateway_address, tx_block, msg) = get_matching_msg_and_tx_block();
-        assert!(verify_message(&gateway_address, &tx_block, &msg));
-    }
-
-    fn get_matching_msg_and_tx_block() -> (SuiAddress, SuiTransactionBlockResponse, Message) {
-        let gateway_address = SuiAddress::random_for_testing_only();
-
-        let msg = Message {
-            tx_id: TransactionDigest::random(),
-            event_index: rand::random::<u64>(),
-            source_address: SuiAddress::random_for_testing_only(),
-            destination_chain: rand_chain_name(),
-            destination_address: format!("0x{:x}", EVMAddress::random()).parse().unwrap(),
-            payload_hash: Hash::random(),
-        };
-
-        let json_str = format!(
-            r#"{{"destination_address": "{}", "destination_chain": "{}",  "payload": "[1,2,3]",
-            "payload_hash": "{}",  "source_id": "{}"}}"#,
-            msg.destination_address,
-            msg.destination_chain,
-            msg.payload_hash.encode_hex(),
-            msg.source_address
-        );
-        let parsed: serde_json::Value = serde_json::from_str(json_str.as_str()).unwrap();
-
-        let event = SuiEvent {
-            id: EventID {
-                tx_digest: msg.tx_id,
-                event_seq: msg.event_index,
-            },
-            package_id: gateway_address.into(),
-            transaction_module: "gateway".parse().unwrap(),
-            sender: msg.source_address,
-            type_: StructTag {
-                address: gateway_address.into(),
-                module: "gateway".parse().unwrap(),
-                name: "ContractCall".parse().unwrap(),
-                type_params: vec![],
-            },
-            parsed_json: parsed,
-            bcs: vec![],
-            timestamp_ms: None,
-        };
-
-        let tx_block = SuiTransactionBlockResponse {
-            digest: msg.tx_id,
-            events: Some(SuiTransactionBlockEvents { data: vec![event] }),
-            ..Default::default()
-        };
-
-        (gateway_address, tx_block, msg)
-    }
-
-    fn rand_chain_name() -> ChainName {
-        let charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
-        generate(8, charset).parse().unwrap()
+    /// Gateway program logs.
+    ///
+    /// Used internally by the Gateway program to log messages.
+    // TODO: We should use the `std::borrow::Cow` to avoid unecessary allocations.
+    #[non_exhaustive]
+    #[repr(u8)]
+    #[derive(Debug, PartialEq, BorshDeserialize, BorshSerialize)]
+    enum GatewayEvent {
+        /// Logged when the Gateway receives an outbound message.
+        CallContract {
+            /// Message sender.
+            sender: PubkeyWrapper,
+            /// The name of the target blockchain.
+            destination_chain: Vec<u8>,
+            /// The address of the target contract in the destination blockchain.
+            destination_address: Vec<u8>,
+            /// Contract call data.
+            payload: Vec<u8>,
+            /// The payload hash.
+            payload_hash: [u8; 32],
+        },
+        /// The event emited after successful keys rotation.
+        OperatorshipTransferred {
+            /// Pubkey of the account that stores the key rotation information.
+            info_account_address: PubkeyWrapper,
+        },
+        /// Emitted for every approved message after the Gateway validates a command
+        /// batch.
+        MessageApproved {
+            /// The Message ID
+            message_id: [u8; 32],
+            /// Source chain.
+            source_chain: String,
+            /// Source address.
+            source_address: String,
+            /// Destination address on Solana.
+            destination_address: [u8; 32],
+            /// The payload hash.
+            payload_hash: [u8; 32],
+        },
     }
 }

@@ -1,17 +1,20 @@
-use std::collections::HashSet;
-use std::convert::TryInto;
-
+use crate::solana::json_rpc::MockSolanaClient;
 use async_trait::async_trait;
+use base64::Engine;
 use cosmrs::cosmwasm::MsgExecuteContract;
 use cosmrs::AccountId;
 use error_stack::ResultExt;
 use serde::Deserialize;
 use solana_sdk::signature::Signature;
+use tracing::info;
+use std::collections::HashSet;
+use std::convert::TryInto;
 use sui_types::base_types::{SuiAddress, TransactionDigest};
 
 use axelar_wasm_std::voting::{PollId, Vote};
 use events::{Error::EventTypeMismatch, Event};
 use events_derive::try_from;
+use tokio::sync::watch::Receiver;
 use voting_verifier::msg::ExecuteMsg;
 
 use crate::event_processor::EventHandler;
@@ -63,8 +66,9 @@ struct PollStartedEvent {
     poll_id: PollId,
     source_gateway_address: String,
     messages: Vec<Message>,
-    // participants: Vec<TMAddress>,
-    participants: Vec<String>,
+    participants: Vec<TMAddress>,
+    expires_at: u64
+    //participants: Vec<String>,
 }
 
 pub struct Handler<C, B>
@@ -76,6 +80,7 @@ where
     voting_verifier: TMAddress,
     rpc_client: C,
     broadcast_client: B,
+    latest_block_height: Receiver<u64>,
 }
 
 impl<C, B> Handler<C, B>
@@ -88,12 +93,14 @@ where
         voting_verifier: TMAddress,
         rpc_client: C,
         broadcast_client: B,
+        latest_block_height: Receiver<u64>,
     ) -> Self {
         Self {
             worker,
             voting_verifier,
             rpc_client,
             broadcast_client,
+            latest_block_height,
         }
     }
     async fn broadcast_votes(&self, poll_id: PollId, votes: Vec<Vote>) -> Result<()> {
@@ -134,6 +141,7 @@ where
             source_gateway_address,
             messages,
             participants,
+            expires_at,
             ..
         } = match event.try_into() as error_stack::Result<_, _> {
             Err(report) if matches!(report.current_context(), EventTypeMismatch(_)) => {
@@ -152,18 +160,24 @@ where
         }
 
         println!("222222222222222222222222222");
-        // if !participants.contains(&self.worker) {
-        //     println!("DONT CONTAIN");
-        //     return Ok(());
-        // }
-
-        // TODO: Uncomment when using fake workers
-        if !participants.contains(&String::from(
-            "axelar17lqysp4lka9h6cyw8enxhw20t9f855zfw3k3xg",
-        )) {
-            println!("KOR222222222222222222222222222");
+        if !participants.contains(&self.worker) {
+            println!("DONT CONTAIN");
             return Ok(());
         }
+
+        let latest_block_height = *self.latest_block_height.borrow();
+        if latest_block_height >= expires_at {
+            info!(poll_id = poll_id.to_string(), "skipping expired poll");
+            return Ok(());
+        }
+
+        // TODO: Uncomment when using fake workers
+        // if !participants.contains(&String::from(
+        //     "axelar17lqysp4lka9h6cyw8enxhw20t9f855zfw3k3xg",
+        // )) {
+        //     println!("KOR222222222222222222222222222");
+        //     return Ok(());
+        // }
 
         println!("3333333333333333333333333333");
         let tx_ids_from_msg: HashSet<_> = messages.iter().map(|msg| msg.tx_id.clone()).collect();
@@ -189,5 +203,298 @@ where
         }
 
         self.broadcast_votes(poll_id, votes).await
+    }
+}
+
+#[cfg(test)]
+mod test {
+
+    use axelar_wasm_std::nonempty;
+    use base64::engine::general_purpose::STANDARD;
+    use events::Event;
+    use tendermint::abci;
+    use tokio::sync::watch;
+    use voting_verifier::events::{PollMetadata, PollStarted, TxEventConfirmation};
+
+    use crate::{
+        queue::queued_broadcaster::MockBroadcasterClient,
+        solana::json_rpc::{SolInstruction, SolMessage, Transaction, UiTransactionStatusMeta},
+        types::EVMAddress,
+        PREFIX,
+    };
+    use tokio::test as async_test;
+
+    use super::*;
+
+    #[async_test]
+    async fn must_correctly_broadcast_message_validation() {
+        // Setup the context
+        let voting_verifier = TMAddress::random(PREFIX);
+        let worker = TMAddress::random(PREFIX);
+        let expiration = 100u64;
+        let (_, rx) = watch::channel(expiration - 1);      
+
+
+        // Prepare the message verifier and the vote broadcaster
+        let mut broadcast_client = MockBroadcasterClient::new();
+        broadcast_client
+            .expect_broadcast::<MsgExecuteContract>()
+            .once()
+            .returning(|_| Ok(()));
+        let mut sol_client = MockSolanaClient::new();
+        sol_client.expect_get_transaction().times(2).returning(|_| {
+            Ok(dummy_tx_type())
+        });
+
+        let event: Event = get_event(
+            get_poll_started_event(participants(5, Some(worker.clone())), 100),
+            &voting_verifier,
+        );
+
+        let handler =
+            super::Handler::new(worker, voting_verifier, sol_client, broadcast_client, rx);
+
+        handler.handle(&event).await.unwrap();
+    }
+
+    #[async_test]
+    async fn must_skip_duplicated_tx() {
+        // Setup the context
+        let voting_verifier = TMAddress::random(PREFIX);
+        let worker = TMAddress::random(PREFIX);
+        let expiration = 100u64;
+        let (_, rx) = watch::channel(expiration - 1);
+       
+
+        // Prepare the message verifier and the vote broadcaster
+        let mut broadcast_client = MockBroadcasterClient::new();
+        broadcast_client
+            .expect_broadcast::<MsgExecuteContract>()
+            .once()
+            .returning(|_| Ok(()));
+        let mut sol_client = MockSolanaClient::new();
+        sol_client
+            .expect_get_transaction()
+            .once() // Only the first msg is verified, skipping the duplicated one.
+            .returning(|_| Ok(dummy_tx_type()));
+
+        let event: Event = get_event(
+            get_poll_started_event_with_duplicates(participants(5, Some(worker.clone())), 100),
+            &voting_verifier,
+        );
+
+        let handler =
+            super::Handler::new(worker, voting_verifier, sol_client, broadcast_client, rx);
+
+        handler.handle(&event).await.unwrap();
+    }
+
+    fn dummy_tx_type() -> EncodedConfirmedTransactionWithStatusMeta {
+        EncodedConfirmedTransactionWithStatusMeta {
+            // just a dummy return type.
+            transaction: Transaction {
+                message: SolMessage {
+                    instructions: vec![SolInstruction {
+                        data: "".to_string(),
+                    }],
+                    account_keys: vec!["".to_string()],
+                },
+                signatures: vec!["".to_string()],
+            },
+            meta: UiTransactionStatusMeta {
+                log_messages: Some(vec!["".to_string()]),
+            },
+        }
+    }
+
+    #[async_test]
+    async fn ignores_poll_event_if_voting_verifier_address_not_match_event_address() {
+        // Setup the context
+        let voting_verifier = TMAddress::random(PREFIX);
+        let worker = TMAddress::random(PREFIX);
+        let expiration = 100u64;
+        let (_, rx) = watch::channel(expiration - 1);
+
+        // Prepare the message verifier and the vote broadcaster
+        let mut broadcast_client = MockBroadcasterClient::new();
+        broadcast_client
+            .expect_broadcast::<MsgExecuteContract>()
+            .never();
+
+        let mut sol_client = MockSolanaClient::new();
+        sol_client.expect_get_transaction().never();
+
+        let event: Event = get_event(
+            get_poll_started_event(participants(5, Some(worker.clone())), 100),
+            &TMAddress::random(PREFIX), // A different, unexpected address comes from the event.
+        );
+
+        let handler =
+            super::Handler::new(worker, voting_verifier, sol_client, broadcast_client, rx);
+
+        handler.handle(&event).await.unwrap();
+    }
+
+    #[async_test]
+    async fn ignores_poll_event_if_worker_not_part_of_participants() {
+        // Setup the context
+        let voting_verifier = TMAddress::random(PREFIX);
+        let worker = TMAddress::random(PREFIX);
+        let expiration = 100u64;
+        let (_, rx) = watch::channel(expiration - 1);
+
+        // Prepare the message verifier and the vote broadcaster
+        let mut broadcast_client = MockBroadcasterClient::new();
+        broadcast_client
+            .expect_broadcast::<MsgExecuteContract>()
+            .never();
+
+        let mut sol_client = MockSolanaClient::new();
+        sol_client.expect_get_transaction().never();
+
+        let event: Event = get_event(
+            get_poll_started_event(participants(5, None), 100), // This worker is not in participant set. So will skip the event.
+            &voting_verifier,
+        );
+
+        let handler =
+            super::Handler::new(worker, voting_verifier, sol_client, broadcast_client, rx);
+
+        handler.handle(&event).await.unwrap();
+    }
+
+    #[async_test]
+    async fn ignores_expired_poll_event() {
+        // Setup the context
+        let voting_verifier = TMAddress::random(PREFIX);
+        let worker = TMAddress::random(PREFIX);
+        let expiration = 100u64;
+        let (_, rx) = watch::channel(expiration); // expired !
+
+        // Prepare the message verifier and the vote broadcaster
+        let mut broadcast_client = MockBroadcasterClient::new();
+        broadcast_client
+            .expect_broadcast::<MsgExecuteContract>()
+            .never();
+
+        let mut sol_client = MockSolanaClient::new();
+        sol_client.expect_get_transaction().never();
+
+        let event: Event = get_event(
+            get_poll_started_event(participants(5, Some(worker.clone())), 100),
+            &voting_verifier,
+        );
+
+        let handler =
+            super::Handler::new(worker, voting_verifier, sol_client, broadcast_client, rx);
+
+        handler.handle(&event).await.unwrap();
+    }
+
+    fn get_event(event: impl Into<cosmwasm_std::Event>, contract_address: &TMAddress) -> Event {
+        let mut event: cosmwasm_std::Event = event.into();
+
+        event.ty = format!("wasm-{}", event.ty);
+        event = event.add_attribute("_contract_address", contract_address.to_string());
+
+        abci::Event::new(
+            event.ty,
+            event
+                .attributes
+                .into_iter()
+                .map(|cosmwasm_std::Attribute { key, value }| {
+                    (STANDARD.encode(key), STANDARD.encode(value))
+                }),
+        )
+        .try_into()
+        .unwrap()
+    }
+
+    fn get_poll_started_event(participants: Vec<TMAddress>, expires_at: u64) -> PollStarted {
+        get_poll_started_event_with_source_chain(participants, expires_at, "starknet")
+    }
+
+    fn get_poll_started_event_with_source_chain(
+        participants: Vec<TMAddress>,
+        expires_at: u64,
+        source_chain: &str,
+    ) -> PollStarted {
+        PollStarted::Messages {
+            metadata: PollMetadata {
+                poll_id: "100".parse().unwrap(),
+                source_chain: source_chain.parse().unwrap(),
+                source_gateway_address: "sol".to_string().parse().unwrap(),
+                confirmation_height: 15,
+                expires_at,
+                participants: participants
+                    .into_iter()
+                    .map(|addr| cosmwasm_std::Addr::unchecked(addr.to_string()))
+                    .collect(),
+            },
+            messages: vec![
+                TxEventConfirmation {
+                    tx_id: format!("0x{:x}", Hash::random()).parse().unwrap(),
+                    event_index: 10,
+                    source_address: "sol".to_string().parse().unwrap(),
+                    destination_chain: "ethereum".parse().unwrap(),
+                    destination_address: format!("0x{:x}", EVMAddress::random()).parse().unwrap(),
+                    payload_hash: Hash::random().to_fixed_bytes(),
+                },
+                TxEventConfirmation {
+                    tx_id: format!("0x{:x}", Hash::random()).parse().unwrap(),
+                    event_index: 11,
+                    source_address: "sol".to_string().parse().unwrap(),
+                    destination_chain: "ethereum".parse().unwrap(),
+                    destination_address: format!("0x{:x}", EVMAddress::random()).parse().unwrap(),
+                    payload_hash: Hash::random().to_fixed_bytes(),
+                },
+            ],
+        }
+    }
+
+    fn get_poll_started_event_with_duplicates(
+        participants: Vec<TMAddress>,
+        expires_at: u64,
+    ) -> PollStarted {
+        let tx_id: nonempty::String = format!("0x{:x}", Hash::random()).parse().unwrap();
+        PollStarted::Messages {
+            metadata: PollMetadata {
+                poll_id: "100".parse().unwrap(),
+                source_chain: "solana".parse().unwrap(),
+                source_gateway_address: "sol".to_string().parse().unwrap(),
+                confirmation_height: 15,
+                expires_at,
+                participants: participants
+                    .into_iter()
+                    .map(|addr| cosmwasm_std::Addr::unchecked(addr.to_string()))
+                    .collect(),
+            },
+            messages: vec![
+                TxEventConfirmation {
+                    tx_id: tx_id.clone(),
+                    event_index: 10,
+                    source_address: "sol".to_string().parse().unwrap(),
+                    destination_chain: "ethereum".parse().unwrap(),
+                    destination_address: format!("0x{:x}", EVMAddress::random()).parse().unwrap(),
+                    payload_hash: Hash::random().to_fixed_bytes(),
+                },
+                TxEventConfirmation {
+                    tx_id,
+                    event_index: 10,
+                    source_address: "sol".to_string().parse().unwrap(),
+                    destination_chain: "ethereum".parse().unwrap(),
+                    destination_address: format!("0x{:x}", EVMAddress::random()).parse().unwrap(),
+                    payload_hash: Hash::random().to_fixed_bytes(),
+                },
+            ],
+        }
+    }
+
+    fn participants(n: u8, worker: Option<TMAddress>) -> Vec<TMAddress> {
+        (0..n)
+            .into_iter()
+            .map(|_| TMAddress::random(PREFIX))
+            .chain(worker.into_iter())
+            .collect()
     }
 }
