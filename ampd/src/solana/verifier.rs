@@ -250,7 +250,7 @@ mod tests {
         let payload_hash: [u8; 32] = [0; 32];
         let source_gateway_address: String = "sol".to_string();
 
-        let event = GatewayEvent::CallContract {
+        let event = gateway::events::GatewayEvent::CallContract {
             sender: Pubkey::from([0; 32]).into(),
             destination_chain: destination_chain.clone().into_bytes(),
             destination_address: destination_address.clone().into_bytes(),
@@ -335,47 +335,5 @@ mod tests {
         let (gateway_address, tx, mut msg) = get_matching_msg_and_tx_block();
         msg.payload_hash = [1; 32];
         assert_eq!(Vote::FailedOnChain, verify_message(&gateway_address, &tx, &msg));
-    }
-
-    /// Gateway program logs.
-    ///
-    /// Used internally by the Gateway program to log messages.
-    // TODO: We should use the `std::borrow::Cow` to avoid unecessary allocations.
-    #[non_exhaustive]
-    #[repr(u8)]
-    #[derive(Debug, PartialEq, BorshDeserialize, BorshSerialize)]
-    enum GatewayEvent {
-        /// Logged when the Gateway receives an outbound message.
-        CallContract {
-            /// Message sender.
-            sender: PubkeyWrapper,
-            /// The name of the target blockchain.
-            destination_chain: Vec<u8>,
-            /// The address of the target contract in the destination blockchain.
-            destination_address: Vec<u8>,
-            /// Contract call data.
-            payload: Vec<u8>,
-            /// The payload hash.
-            payload_hash: [u8; 32],
-        },
-        /// The event emited after successful keys rotation.
-        OperatorshipTransferred {
-            /// Pubkey of the account that stores the key rotation information.
-            info_account_address: PubkeyWrapper,
-        },
-        /// Emitted for every approved message after the Gateway validates a command
-        /// batch.
-        MessageApproved {
-            /// The Message ID
-            message_id: [u8; 32],
-            /// Source chain.
-            source_chain: String,
-            /// Source address.
-            source_address: String,
-            /// Destination address on Solana.
-            destination_address: [u8; 32],
-            /// The payload hash.
-            payload_hash: [u8; 32],
-        },
     }
 }
