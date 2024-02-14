@@ -41,7 +41,7 @@ struct PollStartedEvent {
     source_gateway_address: String,
     messages: Vec<Message>,
     participants: Vec<TMAddress>,
-    expires_at: u64, //participants: Vec<String>,
+    expires_at: u64,
 }
 
 pub struct Handler<C, B>
