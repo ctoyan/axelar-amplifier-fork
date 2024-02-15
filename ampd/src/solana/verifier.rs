@@ -56,8 +56,8 @@ impl PartialEq<&Message> for GatewayEvent {
                 event_dest_addr.is_ok()
                     && event_dest_chain.is_ok()
                     && event_dest_addr.unwrap() == msg.destination_address
-                    && event_dest_chain.unwrap() == msg.destination_chain.to_string()
-                    && payload_hash.to_owned() == msg.payload_hash
+                    && msg.destination_chain == event_dest_chain.unwrap()
+                    && *payload_hash == msg.payload_hash
             }
         }
     }
@@ -93,7 +93,7 @@ pub fn verify_message(
     let gw_event_parsed: Option<GatewayEvent> = log_messages
         .iter()
         // TODO: Will find_map work with multiple msgs in transaction?
-        .find_map(|program_log| GatewayEvent::parse_log(program_log));
+        .find_map(GatewayEvent::parse_log);
 
     // let prog_data_base64_borsh = get_program_data_from_log(tx.meta.log_messages.as_ref());
     // let prog_data = decode_program_data(prog_data_base64_borsh.clone()).unwrap(); // TODO: Should
