@@ -69,7 +69,7 @@ fn decode_base64(input: &str) -> Option<Vec<u8>> {
 }
 
 pub fn verify_message(
-    source_gateway_address: &String, // TODO: check if sender is source_gateway_address
+    source_gateway_address: &String,
     tx: &EncodedConfirmedTransactionWithStatusMeta,
     message: &Message,
 ) -> Vote {
@@ -107,9 +107,6 @@ pub fn verify_message(
         .iter()
         // TODO: Will find_map work with multiple msgs in transaction?
         .find_map(GatewayEvent::parse_log);
-
-    // let prog_data_base64_borsh = get_program_data_from_log(tx.meta.log_messages.as_ref());
-    // let prog_data = decode_program_data(prog_data_base64_borsh.clone()).unwrap(); // TODO: Should
 
     if gw_event_parsed.is_none() {
         error!(
