@@ -3,11 +3,14 @@ use base64::Engine as _;
 use borsh::{BorshDeserialize, BorshSerialize};
 
 use base64::{self, engine::general_purpose};
+use solana_transaction_status::{
+    option_serializer::OptionSerializer, EncodedConfirmedTransactionWithStatusMeta,
+};
 use tracing::warn;
 
 use crate::handlers::solana_verify_msg::Message;
 
-use super::{json_rpc::EncodedConfirmedTransactionWithStatusMeta, pub_key_wrapper::PubkeyWrapper};
+use super::pub_key_wrapper::PubkeyWrapper;
 
 // Gateway program logs.
 // Logged when the Gateway receives an outbound message.
@@ -70,14 +73,25 @@ pub fn verify_message(
     tx: &EncodedConfirmedTransactionWithStatusMeta,
     message: &Message,
 ) -> Vote {
-    if let None = tx.meta.log_messages {
-        // TODO: Log error/warn, because this event should contain log msgs?
-        return Vote::NotFound;
-    }
+    let tx_meta = match &tx.transaction.meta {
+        Some(meta) => meta,
+        None => {
+            // TODO: Log error/warn, because this event should be parsed
+            warn!("failed to parse the event");
+            return Vote::NotFound;
+        }
+    };
 
-    let program_data = tx.meta.log_messages.as_ref().unwrap();
-    let gw_event_parsed: Option<GatewayEvent> = program_data
-        .into_iter()
+    let log_messages = match &tx_meta.log_messages {
+        OptionSerializer::Some(log) => log,
+        _ => {
+            // TODO: Log error/warn, because this event should contain log msgs?
+            return Vote::NotFound;
+        }
+    };
+
+    let gw_event_parsed: Option<GatewayEvent> = log_messages
+        .iter()
         // TODO: Will find_map work with multiple msgs in transaction?
         .find_map(|program_log| GatewayEvent::parse_log(program_log));
 
@@ -90,14 +104,28 @@ pub fn verify_message(
         return Vote::FailedOnChain;
     }
 
+    let ui_tx = match &tx.transaction.transaction {
+        solana_transaction_status::EncodedTransaction::Json(tx) => tx,
+        _ => {
+            // TODO: Log error/warn, because this event should be parsed
+            warn!("failed to parse the event");
+            return Vote::FailedOnChain;
+        }
+    };
+
+    let ui_parsed_msg = match &ui_tx.message {
+        solana_transaction_status::UiMessage::Raw(msg) => msg,
+        _ => {
+            // TODO: Log error/warn, because this event should be parsed
+            warn!("failed to parse the event");
+            return Vote::FailedOnChain;
+        }
+    };
+
     //NOTE: first signagure is always tx_id
     let verified = gw_event_parsed.clone().unwrap() == message
-        && tx.transaction.signatures[0] == message.tx_id
-        && tx
-            .transaction
-            .message
-            .account_keys
-            .contains(source_gateway_address);
+        && ui_tx.signatures[0] == message.tx_id
+        && ui_parsed_msg.account_keys.contains(source_gateway_address);
 
     match verified {
         true => Vote::SucceededOnChain,
@@ -109,9 +137,6 @@ pub fn verify_message(
 mod tests {
     use std::str::FromStr;
 
-    use crate::solana::json_rpc::{
-        SolInstruction, SolMessage, Transaction, UiTransactionStatusMeta,
-    };
     use connection_router::state::ChainName;
     use solana_program::pubkey::Pubkey;
 
@@ -134,7 +159,7 @@ mod tests {
         let destination_address = "0x0".to_string();
         let payload: Vec<u8> = Vec::new();
         let payload_hash: [u8; 32] = [0; 32];
-        let source_gateway_address: String = "sol".to_string();
+        let source_gateway_address: String = "sol_gateway_addr".to_string();
 
         let event = gateway::events::GatewayEvent::CallContract {
             sender: Pubkey::from([0; 32]).into(),
@@ -150,20 +175,8 @@ mod tests {
         let mut log_message = "Program data: ".to_string();
         log_message.push_str(&event_data_b64);
 
-        let tx = EncodedConfirmedTransactionWithStatusMeta {
-            transaction: Transaction {
-                message: SolMessage {
-                    instructions: vec![SolInstruction {
-                        data: "".to_string(),
-                    }],
-                    account_keys: vec![source_gateway_address.clone()],
-                },
-                signatures: vec![tx_id.clone()],
-            },
-            meta: UiTransactionStatusMeta {
-                log_messages: Some(vec![log_message]),
-            },
-        };
+        let tx: EncodedConfirmedTransactionWithStatusMeta =
+            serde_json::from_str(include_str!("tests/solana_tx.json")).unwrap();
 
         let message = Message {
             tx_id,

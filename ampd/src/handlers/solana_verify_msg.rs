@@ -2,6 +2,7 @@ use async_trait::async_trait;
 use cosmrs::cosmwasm::MsgExecuteContract;
 use error_stack::ResultExt;
 use serde::Deserialize;
+use solana_transaction_status::EncodedConfirmedTransactionWithStatusMeta;
 use std::collections::HashSet;
 use std::convert::TryInto;
 use tracing::info;
@@ -15,7 +16,6 @@ use voting_verifier::msg::ExecuteMsg;
 use crate::event_processor::EventHandler;
 use crate::handlers::errors::Error;
 use crate::queue::queued_broadcaster::BroadcasterClient;
-use crate::solana::json_rpc::EncodedConfirmedTransactionWithStatusMeta;
 use crate::solana::{json_rpc::SolanaClient, verifier::verify_message};
 use crate::types::TMAddress;
 
@@ -158,7 +158,7 @@ where
 mod test {
 
     use axelar_wasm_std::nonempty;
-    use base64::engine::general_purpose::STANDARD;
+    use base64::{engine::general_purpose::STANDARD, Engine};
     use events::Event;
     use tendermint::abci;
     use tokio::sync::watch;
@@ -166,9 +166,7 @@ mod test {
 
     use crate::{
         queue::queued_broadcaster::MockBroadcasterClient,
-        solana::json_rpc::{
-            MockSolanaClient, SolInstruction, SolMessage, Transaction, UiTransactionStatusMeta,
-        },
+        solana::json_rpc::MockSolanaClient,
         types::{EVMAddress, Hash},
         PREFIX,
     };
@@ -239,21 +237,8 @@ mod test {
     }
 
     fn dummy_tx_type() -> EncodedConfirmedTransactionWithStatusMeta {
-        EncodedConfirmedTransactionWithStatusMeta {
-            // just a dummy return type.
-            transaction: Transaction {
-                message: SolMessage {
-                    instructions: vec![SolInstruction {
-                        data: "".to_string(),
-                    }],
-                    account_keys: vec!["".to_string()],
-                },
-                signatures: vec!["".to_string()],
-            },
-            meta: UiTransactionStatusMeta {
-                log_messages: Some(vec!["".to_string()]),
-            },
-        }
+        // Example from https://solana.com/docs/rpc/http/gettransaction
+        serde_json::from_str(include_str!("../solana/tests/solana_tx.json")).unwrap()
     }
 
     #[async_test]
