@@ -6,7 +6,7 @@ use base64::{self, engine::general_purpose};
 use solana_transaction_status::{
     option_serializer::OptionSerializer, EncodedConfirmedTransactionWithStatusMeta,
 };
-use tracing::warn;
+use tracing::error;
 
 use crate::handlers::solana_verify_msg::Message;
 
@@ -73,11 +73,24 @@ pub fn verify_message(
     tx: &EncodedConfirmedTransactionWithStatusMeta,
     message: &Message,
 ) -> Vote {
+    let ui_tx = match &tx.transaction.transaction {
+        solana_transaction_status::EncodedTransaction::Json(tx) => tx,
+        _ => {
+            error!("failed to parse solana tx.");
+            return Vote::FailedOnChain;
+        }
+    };
+
+    let tx_not_found = String::from("tx not found");
+    let tx_id = ui_tx.signatures.first().unwrap_or(&tx_not_found);
+
     let tx_meta = match &tx.transaction.meta {
         Some(meta) => meta,
         None => {
-            // TODO: Log error/warn, because this event should be parsed
-            warn!("failed to parse the event");
+            error!(
+                tx_id = tx_id,
+                "Theres no available tx metadata to parse log messages from."
+            );
             return Vote::NotFound;
         }
     };
@@ -85,7 +98,7 @@ pub fn verify_message(
     let log_messages = match &tx_meta.log_messages {
         OptionSerializer::Some(log) => log,
         _ => {
-            // TODO: Log error/warn, because this event should contain log msgs?
+            error!(tx_id = tx_id, "Theres no log messages in tx.");
             return Vote::NotFound;
         }
     };
@@ -99,25 +112,20 @@ pub fn verify_message(
     // let prog_data = decode_program_data(prog_data_base64_borsh.clone()).unwrap(); // TODO: Should
 
     if gw_event_parsed.is_none() {
-        // TODO: Log error/warn, because this event should be parsed
-        warn!("failed to parse the event");
+        error!(
+            tx_id = tx_id,
+            "The gateway event could not be parsed from tx log messages."
+        );
         return Vote::FailedOnChain;
     }
-
-    let ui_tx = match &tx.transaction.transaction {
-        solana_transaction_status::EncodedTransaction::Json(tx) => tx,
-        _ => {
-            // TODO: Log error/warn, because this event should be parsed
-            warn!("failed to parse the event");
-            return Vote::FailedOnChain;
-        }
-    };
 
     let ui_parsed_msg = match &ui_tx.message {
         solana_transaction_status::UiMessage::Raw(msg) => msg,
         _ => {
-            // TODO: Log error/warn, because this event should be parsed
-            warn!("failed to parse the event");
+            error!(
+                tx_id = tx_id,
+                "Could not gather tx message for checking account keys."
+            );
             return Vote::FailedOnChain;
         }
     };
