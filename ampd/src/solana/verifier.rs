@@ -82,6 +82,7 @@ pub fn verify_message(
     };
 
     let tx_not_found = String::from("tx not found");
+    // NOTE: first signature is always tx_id
     let tx_id = ui_tx.signatures.first().unwrap_or(&tx_not_found);
 
     let tx_meta = match &tx.transaction.meta {
@@ -127,9 +128,8 @@ pub fn verify_message(
         }
     };
 
-    //NOTE: first signagure is always tx_id
     let verified = gw_event_parsed.clone().unwrap() == message
-        && ui_tx.signatures[0] == message.tx_id
+        && *tx_id == message.tx_id
         && ui_parsed_msg.account_keys.contains(source_gateway_address);
 
     match verified {
