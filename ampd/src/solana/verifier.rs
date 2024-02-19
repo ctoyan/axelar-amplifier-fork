@@ -104,19 +104,6 @@ pub fn verify_message(
         }
     };
 
-    let gw_event_parsed: Option<GatewayEvent> = log_messages
-        .iter()
-        // TODO: Will find_map work with multiple msgs in transaction?
-        .find_map(GatewayEvent::parse_log);
-
-    if gw_event_parsed.is_none() {
-        error!(
-            tx_id = tx_id,
-            "The gateway event could not be parsed from tx log messages."
-        );
-        return Vote::FailedOnChain;
-    }
-
     let ui_parsed_msg = match &ui_tx.message {
         solana_transaction_status::UiMessage::Raw(msg) => msg,
         _ => {
@@ -128,14 +115,23 @@ pub fn verify_message(
         }
     };
 
-    let verified = gw_event_parsed.clone().unwrap() == message
-        && *tx_id == message.tx_id
-        && ui_parsed_msg.account_keys.contains(source_gateway_address);
+    // Iterating over all logs till we found one of them that
+    // can be parsed + verified.
+    for log in log_messages.iter() {
+        match GatewayEvent::parse_log(&log) {
+            Some(parsed_ev) => {
+                let verified = parsed_ev == message
+                    && *tx_id == message.tx_id
+                    && ui_parsed_msg.account_keys.contains(source_gateway_address);
 
-    match verified {
-        true => Vote::SucceededOnChain,
-        false => Vote::FailedOnChain,
+                if verified {
+                    return Vote::SucceededOnChain;
+                }
+            }
+            None => continue,
+        }
     }
+    Vote::FailedOnChain
 }
 
 #[cfg(test)]
