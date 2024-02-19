@@ -166,19 +166,25 @@ mod tests {
         let payload_hash: [u8; 32] = [0; 32];
         let source_gateway_address: String = "sol_gateway_addr".to_string();
 
-        let event = gateway::events::GatewayEvent::CallContract {
-            sender: Pubkey::from([0; 32]).into(),
-            destination_chain: destination_chain.clone().into_bytes(),
-            destination_address: destination_address.clone().into_bytes(),
-            payload,
-            payload_hash,
-        };
+        // Code below helps on generating the program log line for adding in the
+        // tests/solana_tx.json file and use it as test fixture. See the "logMessages" field
+        // on it.
+        //
+        // let event = gateway::events::GatewayEvent::CallContract {
+        //     sender: Pubkey::from([0; 32]).into(),
+        //     destination_chain: destination_chain.clone().into_bytes(),
+        //     destination_address: destination_address.clone().into_bytes(),
+        //     payload,
+        //     payload_hash,
+        // };
 
-        let mut event_data = Vec::new();
-        event.serialize(&mut event_data).unwrap();
-        let event_data_b64 = general_purpose::STANDARD.encode(event_data);
-        let mut log_message = "Program data: ".to_string();
-        log_message.push_str(&event_data_b64);
+        // let mut event_data = Vec::new();
+        // event.serialize(&mut event_data).unwrap();
+        // let event_data_b64 = general_purpose::STANDARD.encode(event_data);
+        // let mut log_message = "Program data: ".to_string();
+        // log_message.push_str(&event_data_b64);
+
+        // println!("------> {}", log_message);
 
         let tx: EncodedConfirmedTransactionWithStatusMeta =
             serde_json::from_str(include_str!("tests/solana_tx.json")).unwrap();
